@@ -5,7 +5,7 @@ library(patchwork)
 
 
 exp <- "exp1"  # change to "exp2" to run on experiment 2
-data <- readr::read_csv(paste0("data/", exp, "/processed.csv"))
+data <- readr::read_csv(paste0("data/processed_", exp, ".csv"))
 
 
 data <- data %>%
