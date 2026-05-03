@@ -44,10 +44,16 @@ predict_partial_nc <- function(W_act, pool, gamma, ...) pool^gamma * W_act
 # alpha < 1 = compression
 predict_compression <- function(W_act, pool, alpha, ...) alpha * pool * W_act
 
-# --- M4: Partial Pooling ---
+# --- M4: Compression + Partial Pooling ---
 # W_pred = alpha * (N_act / N_rep)^gamma * W_act
 # alpha = compression, gamma = pooling efficiency
 predict_partial <- function(W_act, pool, alpha, gamma, ...) alpha * pool^gamma * W_act
+
+# --- M5: Linear Compression + Partial Pooling ---
+# W_pred = (alpha0 + alpha1 * W_act) * (N_act / N_rep)^gamma * W_act
+# alpha0, alpha1 = width-dependent compression; gamma = pooling efficiency
+predict_linear <- function(W_act, pool, alpha0, alpha1, gamma, ...)
+  (alpha0 + alpha1 * W_act) * pool^gamma * W_act
 
 
 # fitting
@@ -72,7 +78,7 @@ fit_participant <- function(sub) {
   sse <- sum((W - pred)^2)
   s <- compute_fit_stats(sse, 0, n)
   results[[1]] <- data.frame(
-    Model = "Null", k = 0, alpha = NA, gamma = NA,
+    Model = "Null", k = 0, alpha = NA, alpha1 = NA, gamma = NA,
     SSE = sse, LL = s$LL, AIC = s$AIC, BIC = s$BIC, RMSE = s$RMSE)
 
   # M1: Perfect Pooling (0 params)
@@ -80,7 +86,7 @@ fit_participant <- function(sub) {
   sse <- sum((W - pred)^2)
   s <- compute_fit_stats(sse, 0, n)
   results[[2]] <- data.frame(
-    Model = "Perfect Pooling", k = 0, alpha = NA, gamma = NA,
+    Model = "Perfect Pooling", k = 0, alpha = NA, alpha1 = NA, gamma = NA,
     SSE = sse, LL = s$LL, AIC = s$AIC, BIC = s$BIC, RMSE = s$RMSE)
 
   # M2: Partial Pooling no compression (1 param: gamma)
@@ -92,7 +98,7 @@ fit_participant <- function(sub) {
   s <- compute_fit_stats(fit$value, 1, n)
   results[[3]] <- data.frame(
     Model = "Partial Pooling", k = 1,
-    alpha = NA, gamma = fit$par,
+    alpha = NA, alpha1 = NA, gamma = fit$par,
     SSE = fit$value, LL = s$LL, AIC = s$AIC, BIC = s$BIC, RMSE = s$RMSE)
 
   # M3: Compression + Pooling (1 param: alpha)
@@ -104,10 +110,10 @@ fit_participant <- function(sub) {
   s <- compute_fit_stats(fit$value, 1, n)
   results[[4]] <- data.frame(
     Model = "Compression + Pooling", k = 1,
-    alpha = fit$par, gamma = NA,
+    alpha = fit$par, alpha1 = NA, gamma = NA,
     SSE = fit$value, LL = s$LL, AIC = s$AIC, BIC = s$BIC, RMSE = s$RMSE)
 
-  # M4: Partial Pooling (2 params: alpha, gamma)
+  # M4: Compression + Partial Pooling (2 params: alpha, gamma)
   obj <- function(par) {
     pred <- predict_partial(sub$W_act, sub$pool, par[1], par[2])
     sum((W - pred)^2)
@@ -117,7 +123,20 @@ fit_participant <- function(sub) {
   s <- compute_fit_stats(fit$value, 2, n)
   results[[5]] <- data.frame(
     Model = "Compression + Partial Pooling", k = 2,
-    alpha = fit$par[1], gamma = fit$par[2],
+    alpha = fit$par[1], alpha1 = NA, gamma = fit$par[2],
+    SSE = fit$value, LL = s$LL, AIC = s$AIC, BIC = s$BIC, RMSE = s$RMSE)
+
+  # M5: Linear Compression + Partial Pooling (3 params: alpha0, alpha1, gamma)
+  obj <- function(par) {
+    pred <- predict_linear(sub$W_act, sub$pool, par[1], par[2], par[3])
+    sum((W - pred)^2)
+  }
+  fit <- optim(c(0.9, 0, 0.5), obj, method = "L-BFGS-B",
+               lower = c(0.1, -3, -1), upper = c(2, 3, 3))
+  s <- compute_fit_stats(fit$value, 3, n)
+  results[[6]] <- data.frame(
+    Model = "Linear Compression + Partial Pooling", k = 3,
+    alpha = fit$par[1], alpha1 = fit$par[2], gamma = fit$par[3],
     SSE = fit$value, LL = s$LL, AIC = s$AIC, BIC = s$BIC, RMSE = s$RMSE)
 
   out <- do.call(rbind, results)
@@ -131,7 +150,8 @@ fit_participant <- function(sub) {
 all_fits <- do.call(rbind, lapply(split(data, data$Participant), fit_participant))
 
 model_order <- c("Null", "Perfect Pooling", "Partial Pooling",
-                 "Compression + Pooling", "Compression + Partial Pooling")
+                 "Compression + Pooling", "Compression + Partial Pooling",
+                 "Linear Compression + Partial Pooling")
 all_fits$Model <- factor(all_fits$Model, levels = model_order)
 
 
@@ -172,8 +192,13 @@ lrt1
 lrt2 <- run_lrt("Partial Pooling", "Compression + Partial Pooling", 1)
 lrt2
 
+# M5 vs M4: does width-dependent compression improve fit?
+lrt3 <- run_lrt("Compression + Partial Pooling",
+                "Linear Compression + Partial Pooling", 1)
+lrt3
 
-# parameters
+
+# parameters (M4: Compression + Partial Pooling)
 params <- all_fits %>%
   filter(Model == "Compression + Partial Pooling") %>%
   select(Participant, alpha, gamma)
@@ -186,6 +211,21 @@ round(mean(params$gamma), 4)
 round(sd(params$gamma), 4)
 t.test(params$gamma, mu = 0)
 t.test(params$gamma, mu = 1)
+
+
+# parameters (M5: Linear Compression + Partial Pooling)
+params_m5 <- all_fits %>%
+  filter(Model == "Linear Compression + Partial Pooling") %>%
+  select(Participant, alpha, alpha1, gamma)
+
+round(mean(params_m5$alpha),  4); round(sd(params_m5$alpha),  4)
+round(mean(params_m5$alpha1), 4); round(sd(params_m5$alpha1), 4)
+round(mean(params_m5$gamma),  4); round(sd(params_m5$gamma),  4)
+
+t.test(params_m5$alpha,  mu = 1)
+t.test(params_m5$alpha1, mu = 0)
+t.test(params_m5$gamma,  mu = 0)
+t.test(params_m5$gamma,  mu = 1)
 
 
 # =========plots============
